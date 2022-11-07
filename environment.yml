@@ -1,0 +1,15 @@
+name: spleeter
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - pytorch=1.13.0
+  - torchaudio
+  - cpuonly
+  - ffmpeg
+  - librosa
+  - pip
+  - pip:
+      - tensorflow==2.10.0
+      - soundfile==0.11.0
+      - typer
