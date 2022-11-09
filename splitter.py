@@ -1,10 +1,11 @@
 import math
 from typing import Dict, List, Tuple
+
 import torch
-from torch import nn, Tensor
+from torch import Tensor, nn
 from torch.nn import functional as F
+
 from unet import UNet
-from tf2pytorch import tf2pytorch
 
 
 def batchify(tensor: Tensor, T: int) -> Tensor:
@@ -43,7 +44,6 @@ class Splitter(nn.Module):
         Args:
             wav (Tensor): B x L
         """
-
         stft = torch.stft(
             wav,
             n_fft=self.win_length,
@@ -76,16 +76,17 @@ class Splitter(nn.Module):
         )
         return wav.detach()
 
-    def separate(self, wav: Tensor) -> Dict[str, Tensor]:
+    def forward(self, wav: Tensor) -> Dict[str, Tensor]:
         """
         Separates stereo wav into different tracks (1 predicted track per stem)
         Args:
             wav (tensor): 2 x L
+        Returns:
+            masked stfts by track name
         """
-
         # stft - 2 X F x L x 2
         # stft_mag - 2 X F x L
-        stft, stft_mag = self.compute_stft(wav)
+        stft, stft_mag = self.compute_stft(wav.squeeze())
 
         L = stft.size(2)
 
@@ -101,7 +102,7 @@ class Splitter(nn.Module):
         mask_sum = sum([m**2 for m in masks.values()])
         mask_sum += 1e-10
 
-        def reconstruct(mask):
+        def apply_mask(mask):
             mask = (mask**2 + 1e-10 / 2) / (mask_sum)
             mask = mask.transpose(2, 3)  # B x 2 X F x T
 
@@ -109,25 +110,44 @@ class Splitter(nn.Module):
 
             mask = mask.squeeze(0)[:, :, :L].unsqueeze(-1)  # 2 x F x L x 1
             stft_masked = stft * mask
-            wav_masked = self.inverse_stft(stft_masked)
-            return wav_masked
+            return stft_masked
 
-        return {name: reconstruct(m) for name, m in masks.items()}
+        return {name: apply_mask(m) for name, m in masks.items()}
+
+    def separate(self, wav: Tensor) -> Dict[str, Tensor]:
+        """
+        Separates stereo wav into different tracks (1 predicted track per stem)
+        Args:
+            wav (tensor): 2 x L
+        Returns:
+            wavs by track name
+        """
+
+        stft_masks = self.forward(wav)
+
+        return {
+            name: self.inverse_stft(stft_masked)
+            for name, stft_masked in stft_masks.items()
+        }
 
     @classmethod
-    def from_pretrained(cls, model_path: str):
-        ckpt = tf2pytorch(checkpoint_path=model_path)
-        stem_names = list(
-            set([k.split(".")[1] for k in ckpt.keys() if k.startswith("stems.")])
-        )
-        model = cls(stem_names=stem_names)  # ["vocals", "accompaniment"])
-        state_dict = model.state_dict()
-        for k, v in ckpt.items():
-            if k in state_dict:
-                assert v.shape == state_dict[k].shape
-                state_dict.update({k: torch.from_numpy(v)})
-            else:
-                print("Ignore ", k)
+    def from_pretrained(cls, model_path: str, from_tensorflow: bool = True):
+        if from_tensorflow:
+            from tf2pytorch import tf2pytorch
 
-        model.load_state_dict(state_dict)
-        return model
+            ckpt = tf2pytorch(checkpoint_path=model_path)
+            stem_names = list(
+                set([k.split(".")[1] for k in ckpt.keys() if k.startswith("stems.")])
+            )
+            model = cls(stem_names=stem_names)  # ["vocals", "accompaniment"])
+            state_dict = model.state_dict()
+            for k, v in ckpt.items():
+                if k in state_dict:
+                    assert v.shape == state_dict[k].shape
+                    state_dict.update({k: torch.from_numpy(v)})
+                else:
+                    print("Ignore ", k)
+
+            model.load_state_dict(state_dict)
+            return model
+        raise NotImplementedError("pytorch loading is NOT yet supported.")

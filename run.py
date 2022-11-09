@@ -1,6 +1,7 @@
-import typer
-import torch
 from pathlib import Path
+
+import torch
+import typer
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
 
@@ -31,9 +32,13 @@ def split(
     model_path: str = "models/2stems/model",
     input: str = "data/audio_example.mp3",
     output_dir: str = "output",
+    offset: float = 0,
+    duration: float = 30,
+    write_src: bool = False,
 ) -> None:
     import librosa
     import soundfile
+
     from splitter import Splitter
 
     sr = 44100
@@ -41,10 +46,14 @@ def split(
     splitter = Splitter.from_pretrained(model_path).to(device).eval()
 
     # load wav audio
-    # fpath_src = Path("data/audio_example.mp3")
     fpath_src = Path(input)
     wav, _ = librosa.load(
-        fpath_src, mono=False, res_type="kaiser_fast", sr=sr, duration=30
+        fpath_src,
+        mono=False,
+        res_type="kaiser_fast",
+        sr=sr,
+        duration=duration,
+        offset=offset,
     )
     wav = torch.Tensor(wav).to(device)
 
@@ -54,6 +63,8 @@ def split(
     with torch.no_grad():
         stems = splitter.separate(wav)
 
+    if write_src:
+        stems["input"] = wav
     for name, stem in stems.items():
         fpath_dst = Path(output_dir) / f"{fpath_src.stem}_{name}.wav"
         print(f"Writing {fpath_dst}")
